@@ -1,0 +1,18 @@
+[package]
+name = "r-cron"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.95"
+clap = { version = "4.0", features = ["derive"] }
+chrono-tz = "0.10.0"
+serde = { version = "1.0.217", features = ["derive"]}
+serde_yaml = "0.9.34"
+tokio = { version = "1.43.0", features = ["full"] }
+tokio-cron-scheduler = { version = "0.13.0", features = ["signal", "log"]}
+tokio-macros = "1.0"
+log = "0.4.24"
+env_logger = "0.11.6"
+log4rs = "1.0"
+chrono = "0.4.39"
