@@ -112,10 +112,10 @@ async fn terminate_rcron_process() -> Result<(), std::io::Error> {
         .await?;
 
     let pid_list = String::from_utf8_lossy(&output.stdout);
-    let pids = pid_list.split('\n').filter_map(|pid| pid.parse::<i32>().ok());
+    let pids = pid_list.split('\n').filter_map(|pid| pid.parse::<u32>().ok());
 
     for pid in pids {
-        if pid == current_pid as i32 {
+        if pid == current_pid {
             continue;
         }
         Command::new("kill")
