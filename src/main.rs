@@ -1,14 +1,16 @@
 use anyhow::Result;
 use chrono::Local;
-use tokio::{fs::File, process::Command, sync::{Mutex, Notify}};
+use tokio::{fs::File, io::{AsyncBufReadExt, BufReader}, process::Command, sync::{Mutex, Notify}};
 use tokio_cron_scheduler::{JobScheduler, Job};
 use serde::{Serialize, Deserialize};
-use std::{fs::File as StdFile, process, str::FromStr, sync::{atomic::{AtomicUsize, Ordering}, Arc}, time::Duration};
+use std::{f64::consts::E, fs::File as StdFile, process::{self, Stdio}, str::FromStr, sync::{atomic::{AtomicUsize, Ordering}, Arc}, time::Duration};
 use tokio::signal::unix::{signal, SignalKind}; // 用于捕获信号
 use log::{debug, info, warn};
 use env_logger::{Builder, Env};
 use std::io::{Write};
 use clap::Parser;
+use std::error::Error;
+
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -60,7 +62,7 @@ async fn run() -> anyhow::Result<()> {
         let is_shutdown = is_shutdown.clone();
 
         sched.lock().await.add(
-            Job::new_async_tz(cron, tz, move |_uuid, mut _l| {
+            Job::new_async_tz(cron, tz, move |uuid, mut _l| {
                 let command = comm.command.clone();
                 let args = comm.args.clone();
                 let remaining_tasks = remaining_tasks.clone();
@@ -70,30 +72,105 @@ async fn run() -> anyhow::Result<()> {
                 Box::pin(async move {
                     let shutdown_guard = is_shutdown.lock().await;
                     if *shutdown_guard {
-                        info!("收到关闭信号，正在退出...");
+                        info!("{}, 收到关闭信号，正在退出...", uuid);
+                        return;
+                    }
+                    
+                    remaining_tasks.fetch_add(1, Ordering::SeqCst); // 增加剩余任务计数
+
+                    info!("{}, 执行任务: {} {}", uuid, command, args);
+
+                    let child = Command::new(command)
+                        .args(args.split_whitespace())
+                        // .stdout(Stdio::null())
+                        .spawn();
+                    
+                    if let Err(e) = child {
+                        warn!("{}, 执行命令失败: {}", uuid, e);
+                        remaining_tasks.fetch_sub(1, Ordering::SeqCst);
                         return;
                     }
 
-                    remaining_tasks.fetch_add(1, Ordering::SeqCst); // 增加剩余任务计数
+                    let child = child.unwrap();
 
-                    info!("执行任务: {} {}", command, args);
-                    let output: Result<std::process::Output, std::io::Error> = Command::new(command)
-                        .args(args.split(' ').collect::<Vec<_>>())
-                        .output()
-                        .await;
-                    info!("执行命令: {}", remaining_tasks.load(Ordering::SeqCst));
-                    if let Ok(output) = output {
-                        info!("{}", String::from_utf8_lossy(&output.stdout));
-                        if !output.status.success() {
-                            warn!("错误信息: {}", String::from_utf8_lossy(&output.stderr));
-                        }
-                    } else {
-                        warn!("错误信息: {}", output.unwrap_err());
+                    let out = child.wait_with_output().await;
+
+                    if let Err(e) = out {
+                        warn!("{}, 执行命令失败: {}", uuid, e);
+                        remaining_tasks.fetch_sub(1, Ordering::SeqCst);
+                        return;
                     }
+
+                    let out = out.unwrap();
+
+                    if out.status.success() {
+                        info!("{}, 执行成功", uuid);
+                        info!("返回信息{}", String::from_utf8_lossy(&out.stdout))
+                    } else {
+                        warn!("{}, 执行失败", uuid);
+                        info!("返回信息{}", String::from_utf8_lossy(&out.stderr))
+                    }
+                    // let mut child = child.expect("ls command failed to start").await;
+
+                    // let stdout = match child.stdout.take() {
+                    //     Some(out) => {
+                    //         BufReader::new(out)
+                    //     }
+                    //     None => {
+                    //         remaining_tasks.fetch_sub(1, Ordering::SeqCst);
+                    //         warn!("{}, 警告: 命令没有标准输出", uuid);
+                    //         return;
+                    //     }
+                    // };
+                    // let stderr = match child.stderr.take() {
+                    //     Some(out) => {
+                    //         BufReader::new(out)
+                    //     }
+                    //     None => {
+                    //         remaining_tasks.fetch_sub(1, Ordering::SeqCst);
+                    //         warn!("{}, 警告: 命令没有标准错误输出", uuid);
+                    //         return;
+                    //     }
+                    // };
+
+
+                    // // 创建异步任务来处理标准输出
+                    // let stdout_handler = tokio::spawn(async move {
+                    //     let mut lines = stdout.lines();
+                    //     while let Some(line) = lines.next_line().await.unwrap() {
+                    //         // 处理标准输出
+                    //         info!("stdout: {}", line);
+                    //     }
+                    // });
+
+                    // // 创建异步任务来处理标准错误
+                    // let stderr_handler = tokio::spawn(async move {
+                    //     let mut lines = stderr.lines();
+                    //     while let Some(line) = lines.next_line().await.unwrap() {
+                    //         // 处理标准错误
+                    //         info!("stderr: {}", line);
+                    //     }
+                    // });
+
+                    // 等待子进程完成
+                    // let status = child.wait().await;
+
+                    // if let Err(e) = status {
+                    //     warn!("{}, 执行命令失败: {}", uuid, e);
+                    //     remaining_tasks.fetch_sub(1, Ordering::SeqCst);
+                    //     return;
+                    // }
+                    // let status = status.unwrap();
+                    // println!("命令执行完毕，退出状态：{}", status);
+
+                    // 等待输出处理任务完成
+                    // stdout_handler.await;
+                    // stderr_handler.await;
+                   
                     info!("执行命令: {}", remaining_tasks.load(Ordering::SeqCst));
 
-                    // 任务完成后，减少任务计数
                     remaining_tasks.fetch_sub(1, Ordering::SeqCst);
+                    // 任务完成后，减少任务计数
 
                     // info!("任务完成，剩余任务数量: {}", remaining_tasks.load(Ordering::SeqCst));
 
@@ -106,7 +183,7 @@ async fn run() -> anyhow::Result<()> {
                     //     notify.notify_one();
                     // }
 
-                    info!("执行完成: {}", remaining_tasks.load(Ordering::SeqCst));
+                    // info!("执行完成: {}", remaining_tasks.load(Ordering::SeqCst));
                 })
             })?
         ).await?;
