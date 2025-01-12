@@ -33,7 +33,7 @@ struct Comm {
     cron: String,
 }
 
-static CONFIG_STR: &'static str = include_str!("../config.yaml"); 
+// static CONFIG_STR: &'static str = include_str!("../config.yaml"); 
 
 async fn run() -> anyhow::Result<()> {
     Builder::from_env(Env::default().default_filter_or("info"))
@@ -44,7 +44,9 @@ async fn run() -> anyhow::Result<()> {
         .init();
 
     // Parse config
-    let config: Conf = serde_yaml::from_str(CONFIG_STR)?;
+    // let config: Conf = serde_yaml::from_str(CONFIG_STR)?;
+    let args = Args::parse();
+    let config: Conf = serde_yaml::from_reader(StdFile::open(args.config_file)?)?;
 
     let sched = Arc::new(Mutex::new(JobScheduler::new().await?));
     let is_shutdown = Arc::new(Mutex::new(false)); // 标记是否接收到关闭信号
