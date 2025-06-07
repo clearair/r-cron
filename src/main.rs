@@ -199,3 +199,59 @@ fn main() {
         .unwrap()
         .block_on(run());
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    use tokio_cron_scheduler::{Job, JobScheduler};
+
+    use super::*;
+    use serde_yaml;
+    use clap::Parser;
+
+    #[test]
+    fn test_conf_deserialize() {
+        let yaml = r#"timezone: 'Asia/Shanghai'
+comms:
+  - command: 'echo'
+    args: 'hello world'
+    cron: '* * * * * *'
+timeout: 10
+"#;
+        let conf: Conf = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(conf.timezone, "Asia/Shanghai");
+        assert_eq!(conf.comms.len(), 1);
+        assert_eq!(conf.comms[0].command, "echo");
+        assert_eq!(conf.comms[0].args, "hello world");
+        assert_eq!(conf.comms[0].cron, "* * * * * *");
+        assert_eq!(conf.timeout, 10);
+    }
+
+    #[test]
+    fn test_args_parse() {
+        let args = vec!["prog", "-c", "config.yaml"];
+        let args = Args::parse_from(args);
+        assert_eq!(args.config_file, "config.yaml");
+    }
+
+    #[tokio::test]
+    async fn test_scheduler_triggers_job() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let counter_clone = counter.clone();
+
+        let mut sched = JobScheduler::new().await.unwrap();
+        sched.add(Job::new_async("*/1 * * * * *", move |_uuid, _l| {
+            let counter = counter_clone.clone();
+            Box::pin(async move {
+                counter.fetch_add(1, Ordering::SeqCst);
+            })
+        }).unwrap()).await.unwrap();
+
+        sched.start().await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        sched.shutdown().await.unwrap();
+
+        assert!(counter.load(Ordering::SeqCst) >= 1);
+    }
+}
+
