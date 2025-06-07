@@ -16,4 +16,5 @@ log = "0.4.24"
 env_logger = "0.11.6"
 log4rs = "1.0"
 chrono = "0.4.39"
-uuid = { version = "1.7.0", features = ["v4"] }
+uuid = { version = "1.17.0", features = ["v4"] }
+nix = { version = "0.30.1", features = ["signal"] }

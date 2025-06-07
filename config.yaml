@@ -1,5 +1,6 @@
 timezone: "Asia/Shanghai"
 log: "./log"
+timeout: 20
 comms:
   - command: "curl"
     args: "http://0.0.0.0:8000?a=11"
